@@ -9,7 +9,6 @@ import plotly.express as px
 import time # To show progress
 
 # --- Constants ---
-N_SIMULATIONS = 10000 
 CI_LOWER_BOUND = 2.5
 CI_UPPER_BOUND = 97.5
 
@@ -56,7 +55,7 @@ st.markdown("""
     font-size: 1.1em; /* Slightly larger icon */
     color: #007bff; /* Default Icon color */
 }
-/* Specific Icon Colors (Optional examples) */
+/* Specific Icon Colors */
 .fa-sack-dollar { color: #28a745; } /* Green for revenue */
 .fa-user-dollar { color: #17a2b8; } /* Teal for ARPU */
 .fa-user-slash { color: #ffc107; } /* Amber for zero % */
@@ -143,6 +142,7 @@ def format_percentage(value):
     if not np.isfinite(value): return "N/A"
     return f"{value:,.1f}" # Use comma for thousands separator if needed, 1 decimal place
 
+#@st.cache_data # Consider caching the Monte Carlo run if inputs don't change frequently
 def run_monte_carlo(n_sims, n_cust, base_p, base_k, base_th, pol_p, pol_k, pol_th):
     """Runs the Monte Carlo simulation N times."""
     baseline_metrics = {
@@ -196,7 +196,7 @@ def run_monte_carlo(n_sims, n_cust, base_p, base_k, base_th, pol_p, pol_k, pol_t
 
     progress_bar.empty()
     end_time = time.time()
-    status_text.text(f"Simulations Complete ({n_sims} runs in {end_time - start_time:.2f} seconds)")
+    status_text.text(f"Simulations Complete ({n_sims:,} runs in {end_time - start_time:.2f} seconds)") 
 
     for key in baseline_metrics: baseline_metrics[key] = np.array(baseline_metrics[key])
     for key in initiative_metrics: initiative_metrics[key] = np.array(initiative_metrics[key])
@@ -205,7 +205,7 @@ def run_monte_carlo(n_sims, n_cust, base_p, base_k, base_th, pol_p, pol_k, pol_t
 
 def calculate_ci_and_mean(data_array):
     """Calculates mean and 95% CI using percentiles."""
-    if len(data_array) == 0: # Handle empty array case
+    if data_array is None or len(data_array) == 0: # Handle None or empty array case
         return np.nan, np.nan, np.nan
     mean_val = np.mean(data_array)
     # Ensure percentiles are calculated only on finite values if necessary
@@ -248,14 +248,14 @@ def create_impact_card(icon_class, label, mean_lift, ci_low, ci_high, format_fun
 
     color_class = "impact-value-neutral"
     if np.isfinite(mean_lift) and abs(mean_lift) > 1e-9 : # Check for non-zero finite values
-        is_positive = mean_lift > 0
-        is_significantly_positive = ci_low > 1e-9 # Check if lower bound is also positive
-        is_significantly_negative = ci_high < -1e-9 # Check if upper bound is also negative
+        # Use CI bounds for significance coloring
+        is_significantly_positive = np.isfinite(ci_low) and ci_low > 1e-9 # Check if lower bound is reliably positive
+        is_significantly_negative = np.isfinite(ci_high) and ci_high < -1e-9 # Check if upper bound is reliably negative
 
         if positive_is_good:
             if is_significantly_positive: color_class = "impact-value-positive"
             elif is_significantly_negative: color_class = "impact-value-negative"
-            # else: neutral (CI includes zero or value is near zero)
+            # else: neutral (CI includes zero or value is near zero, or bounds are NaN)
         else: # Negative change is good
              if is_significantly_negative: color_class = "impact-value-positive" # Good outcome = green
              elif is_significantly_positive: color_class = "impact-value-negative" # Bad outcome = red
@@ -284,19 +284,44 @@ def create_impact_card(icon_class, label, mean_lift, ci_low, ci_high, format_fun
 
 # --- Title and Introduction ---
 st.title("🎲 Revenue Impact Simulator")
-st.markdown(f"""
-Analyze the potential revenue impact of customer growth initiatives using **Monte Carlo simulation** ({N_SIMULATIONS:,} runs).
-Results include **95% confidence intervals** to quantify outcome uncertainty.
-Uses a **Zero-Inflated Gamma** model for customer revenue. Adjust parameters and simulate below.
-""")
-st.markdown("---")
+# Title is dynamic based on N_SIMULATIONS selected later
+# st.markdown(f"""
+# Analyze the potential revenue impact of customer growth initiatives using **Monte Carlo simulation** ({N_SIMULATIONS:,} runs).
+# Results include **95% confidence intervals** to quantify outcome uncertainty.
+# Uses a **Zero-Inflated Gamma** model for customer revenue. Adjust parameters and simulate below.
+# """)
+# This will be updated after N_SIMULATIONS is defined by user input
 
 # --- Sidebar Controls ---
 st.sidebar.header("⚙️ Simulation Controls")
 
+# --- Simulation Run Count ---
+# Select number of simulations
+simulation_options = {
+    "Fast (1,000 runs)": 1000,
+    "Medium (5,000 runs)": 5000,
+    "Standard (10,000 runs)": 10000,
+    "High Precision (20,000 runs)": 20000
+}
+selected_sim_option = st.sidebar.selectbox(
+    "Select Simulation Precision:",
+    options=list(simulation_options.keys()),
+    index=2 # Default to 10,000 runs
+)
+N_SIMULATIONS = simulation_options[selected_sim_option] # Get the actual number
+st.sidebar.caption(f"Will perform {N_SIMULATIONS:,} simulations.")
+
+
 # --- Baseline Parameters ---
 st.sidebar.subheader("1. Baseline Customer Profile")
-n_customers = st.sidebar.slider("Number of Customers", 1000, 1000000, 10000, 1000, help="Total customers per simulation run.")
+n_customers = st.sidebar.slider(
+    "Number of Customers",
+    min_value=1000,         # Keep reasonable min
+    max_value=1000000,      # Ensure max is large enough
+    value=150000,           # Set default to 150,000
+    step=1000,              # Reasonable step
+    help="Total customers used in each simulation run."
+)
 
 st.sidebar.markdown("**Distribution Settings (Current State):**")
 current_p_zero_perc = st.sidebar.slider("Percentage of Zero-Revenue Customers (%)", 0.0, 100.0, 60.0, 0.5,
@@ -338,6 +363,7 @@ impact_p_reduction = 0.0
 impact_mean_increase = 0.0
 impact_k_increase_perc = 0.0
 
+# Impact sliders remain the same...
 if selected_initiative == "Engagement Campaign":
     impact_p_reduction_perc = st.sidebar.slider("Reduction in Zero-Revenue % (Target)", 0.0, 100.0, 10.0, 0.5)
     impact_p_reduction = impact_p_reduction_perc / 100.0
@@ -375,7 +401,18 @@ st.sidebar.info(f"""
 
 # --- Simulation Execution ---
 st.sidebar.subheader("3. Run Simulation")
-run_simulation = st.sidebar.button(f"🚀 Run {N_SIMULATIONS} Simulations", disabled=not valid_params, type="primary")
+# Button text is dynamic
+run_simulation = st.sidebar.button(f"🚀 Run {N_SIMULATIONS:,} Simulations", disabled=not valid_params, type="primary")
+
+
+# --- Main Panel ---
+# Dynamic intro text
+st.markdown(f"""
+Analyze the potential revenue impact of customer growth initiatives using **Monte Carlo simulation** ({N_SIMULATIONS:,} runs).
+Results include **95% confidence intervals** to quantify outcome uncertainty.
+Uses a **Zero-Inflated Gamma** model for customer revenue. Adjust parameters and simulate below.
+""")
+st.markdown("---")
 
 # --- Main Panel Results ---
 if 'simulation_results' not in st.session_state:
@@ -390,17 +427,20 @@ if run_simulation and valid_params:
 
     spinner_placeholder = st.empty() # Placeholder for spinner message
     with spinner_placeholder:
-         with st.spinner(f"Running {N_SIMULATIONS} simulations... This may take a moment."):
+         # Use the N_SIMULATIONS selected by the user
+         with st.spinner(f"Running {N_SIMULATIONS:,} simulations... This may take a moment."):
               baseline_metrics_mc, initiative_metrics_mc, first_run_data = run_monte_carlo(
-                   N_SIMULATIONS, n_customers,
+                   N_SIMULATIONS, n_customers, # Pass selected N_SIMULATIONS
                    current_p_zero, current_k_shape, current_theta_scale,
                    initiative_p_zero, initiative_k_shape, initiative_theta_scale
               )
+              # Store the number of sims run along with results for context
               st.session_state['simulation_results'] = {
                    'baseline': baseline_metrics_mc,
                    'initiative': initiative_metrics_mc,
                    'first_run': first_run_data,
-                   'initiative_name': selected_initiative if selected_initiative != "None" else "Baseline" # Store initiative name
+                   'initiative_name': selected_initiative if selected_initiative != "None" else "Baseline",
+                   'n_sims_run': N_SIMULATIONS # Store the count used
               }
               st.session_state['simulation_run_complete'] = True
               spinner_placeholder.empty() # Clear spinner message on completion
@@ -410,43 +450,59 @@ if st.session_state.get('simulation_run_complete', False):
     results = st.session_state['simulation_results']
     if results is None:
          st.warning("Simulation results are not available. Please run the simulation.")
-         st.stop() # Stop execution if results somehow became None after flag set
+         st.stop()
 
+    # Retrieve results and the number of simulations used for this result set
     baseline_mc = results['baseline']
     initiative_mc = results['initiative']
     first_run = results['first_run']
-    # Handle case where initiative is "None" more gracefully
     initiative_name = results['initiative_name'] if results['initiative_name'] != 'Baseline' else 'No Initiative'
+    n_sims_run = results.get('n_sims_run', N_SIMULATIONS) # Use stored N if available, else current selection
 
-    st.header(f"📊 Monte Carlo Simulation Results ({N_SIMULATIONS} runs)")
+    # Dynamic Header
+    st.header(f"📊 Monte Carlo Simulation Results ({n_sims_run:,} runs)")
     st.markdown(f"Comparing **Baseline** vs. **Initiative: {initiative_name}**")
     st.markdown("*(Showing Mean & 95% Confidence Interval)*")
 
     # --- Calculate CIs for all metrics ---
     results_summary = {}
-    for scenario, data in [('Baseline', baseline_mc), ('initiative', initiative_mc)]:
+    # Use 'initiative' key consistently
+    for scenario, data in [('Baseline', baseline_mc), ('Initiative', initiative_mc)]:
         results_summary[scenario] = {}
+        if data is None: continue # Skip if data is missing
         for metric, values in data.items():
             mean_val, ci_low, ci_high = calculate_ci_and_mean(values)
             results_summary[scenario][metric] = {'mean': mean_val, 'ci_low': ci_low, 'ci_high': ci_high}
+
+    # Check if results_summary was populated correctly
+    if 'Baseline' not in results_summary or 'Initiative' not in results_summary:
+         st.error("Failed to calculate summary statistics. Simulation data might be missing.")
+         st.stop()
 
     # --- Calculate CIs for Lift Metrics ---
     revenue_lift_dist = initiative_mc['total_revenue'] - baseline_mc['total_revenue']
     mean_lift, lift_ci_low, lift_ci_high = calculate_ci_and_mean(revenue_lift_dist)
 
     valid_baseline_rev = baseline_mc['total_revenue'][np.isfinite(baseline_mc['total_revenue']) & (baseline_mc['total_revenue'] != 0)]
-    valid_initiative_rev_match = initiative_mc['total_revenue'][np.isfinite(baseline_mc['total_revenue']) & (baseline_mc['total_revenue'] != 0)]
 
     if len(valid_baseline_rev) > 0:
-        # Ensure lengths match if filtering initiative based on baseline non-zero
         indices = np.where(np.isfinite(baseline_mc['total_revenue']) & (baseline_mc['total_revenue'] != 0))[0]
-        valid_initiative_rev_match = initiative_mc['total_revenue'][indices]
+        # Ensure indices are valid for initiative_mc array
+        if max(indices) < len(initiative_mc['total_revenue']):
+             valid_initiative_rev_match = initiative_mc['total_revenue'][indices]
+             # Further ensure these initiative revenues are finite
+             finite_mask = np.isfinite(valid_initiative_rev_match)
+             valid_initiative_rev_match = valid_initiative_rev_match[finite_mask]
+             valid_baseline_rev = valid_baseline_rev[finite_mask] # Ensure baseline matches filtered policy
 
-        revenue_lift_perc_dist = (valid_initiative_rev_match - valid_baseline_rev) / valid_baseline_rev * 100
-        # Remove potential inf/-inf if initiative rev is huge and baseline was tiny
-        revenue_lift_perc_dist = revenue_lift_perc_dist[np.isfinite(revenue_lift_perc_dist)]
-        mean_lift_perc, lift_perc_ci_low, lift_perc_ci_high = calculate_ci_and_mean(revenue_lift_perc_dist)
-
+             if len(valid_baseline_rev) > 0: # Check again after filtering NAs in policy match
+                revenue_lift_perc_dist = (valid_initiative_rev_match - valid_baseline_rev) / valid_baseline_rev * 100
+                revenue_lift_perc_dist = revenue_lift_perc_dist[np.isfinite(revenue_lift_perc_dist)] # Remove inf/-inf
+                mean_lift_perc, lift_perc_ci_low, lift_perc_ci_high = calculate_ci_and_mean(revenue_lift_perc_dist)
+             else:
+                 mean_lift_perc, lift_perc_ci_low, lift_perc_ci_high = (np.nan, np.nan, np.nan)
+        else:
+             mean_lift_perc, lift_perc_ci_low, lift_perc_ci_high = (np.nan, np.nan, np.nan) # Index mismatch error
     else:
         mean_lift_perc, lift_perc_ci_low, lift_perc_ci_high = (np.nan, np.nan, np.nan)
 
@@ -456,6 +512,7 @@ if st.session_state.get('simulation_run_complete', False):
     avg_active_change_dist = initiative_mc['avg_active_revenue'] - baseline_mc['avg_active_revenue']
     mean_avg_active_change, avg_active_change_ci_low, avg_active_change_ci_high = calculate_ci_and_mean(avg_active_change_dist)
 
+
     # --- Display KPIs with CIs using Custom Cards ---
     st.subheader("Key Performance Indicators")
     col_kpi1, col_kpi2 = st.columns(2)
@@ -463,7 +520,7 @@ if st.session_state.get('simulation_run_complete', False):
     with col_kpi1:
         st.markdown("<div class='column-header'>Baseline Scenario</div>", unsafe_allow_html=True)
         bs = results_summary['Baseline']
-        html = create_metric_card("fa-solid fa-sack-dollar", "TOTAL REVENUE", bs['total_revenue']['mean'], bs['total_revenue']['ci_low'], bs['total_revenue']['ci_high'], format_currency, bg_color="#F8F9FA") # Lighter grey bg
+        html = create_metric_card("fa-solid fa-sack-dollar", "TOTAL REVENUE", bs['total_revenue']['mean'], bs['total_revenue']['ci_low'], bs['total_revenue']['ci_high'], format_currency, bg_color="#F8F9FA")
         st.markdown(html, unsafe_allow_html=True)
         html = create_metric_card("fa-solid fa-user-dollar", "ARPU", bs['arpu']['mean'], bs['arpu']['ci_low'], bs['arpu']['ci_high'], format_currency, bg_color="#F8F9FA")
         st.markdown(html, unsafe_allow_html=True)
@@ -473,9 +530,10 @@ if st.session_state.get('simulation_run_complete', False):
         st.markdown(html, unsafe_allow_html=True)
 
     with col_kpi2:
-        initiative_title = initiative_name if initiative_name != 'No Inititative' else 'Scenario Result'
+        initiative_title = initiative_name if initiative_name != 'No Initiative' else 'Scenario Result'
         st.markdown(f"<div class='column-header'>Initiative: {initiative_title}</div>", unsafe_allow_html=True)
-        ps = results_summary['initiative']
+        # Use 'Initiative' key consistently
+        ps = results_summary['Initiative']
         html = create_metric_card("fa-solid fa-sack-dollar", "TOTAL REVENUE", ps['total_revenue']['mean'], ps['total_revenue']['ci_low'], ps['total_revenue']['ci_high'], format_currency, bg_color="#FEFBF4") # Light yellow/orange bg
         st.markdown(html, unsafe_allow_html=True)
         html = create_metric_card("fa-solid fa-user-dollar", "ARPU", ps['arpu']['mean'], ps['arpu']['ci_low'], ps['arpu']['ci_high'], format_currency, bg_color="#FEFBF4")
@@ -510,8 +568,8 @@ if st.session_state.get('simulation_run_complete', False):
     st.markdown("##### Average Breakdown: Zero vs. Active Customers")
     avg_baseline_zeros = results_summary['Baseline']['n_zeros']['mean']
     avg_baseline_active = results_summary['Baseline']['n_active']['mean']
-    avg_initiative_zeros = results_summary['initiative']['n_zeros']['mean']
-    avg_initiative_active = results_summary['initiative']['n_active']['mean']
+    avg_initiative_zeros = results_summary['Initiative']['n_zeros']['mean']
+    avg_initiative_active = results_summary['Initiative']['n_active']['mean']
 
     plot_data_avg = {
         'Scenario': ['Baseline', 'Baseline', f'Initiative: {initiative_name}', f'Initiative: {initiative_name}'],
@@ -584,11 +642,12 @@ if st.session_state.get('simulation_run_complete', False):
              st.info("No active customers in the sample simulation run to display density distribution.")
 
     # --- Explanation Expander ---
+    # Dynamic N_SIMULATIONS in explanation
     with st.expander("ℹ️ Detailed Explanations & Caveats"):
         st.markdown(f"""
-        #### Understanding the Monte Carlo Simulation ({N_SIMULATIONS:,} Runs)
+        #### Understanding the Monte Carlo Simulation ({n_sims_run:,} Runs)
 
-        1.  **Multiple Scenarios:** We simulated `{N_SIMULATIONS:,}` possible futures based on the input parameters. Each run generated `{n_customers:,}` customers for both Baseline and Initiative scenarios.
+        1.  **Multiple Scenarios:** We simulated `{n_sims_run:,}` possible futures based on the input parameters. Each run generated `{n_customers:,}` customers for both Baseline and Initiative scenarios.
         2.  **Quantifying Uncertainty:** This approach captures inherent randomness. The **95% Confidence Interval (CI)** shows the range where we expect the true average metric to lie 95% of the time, given the model and assumptions.
         3.  **Interpreting Cards:**
             *   **KPI Cards:** Show the average (mean) result across all runs and the 95% CI range.
@@ -612,8 +671,9 @@ if st.session_state.get('simulation_run_complete', False):
 elif not valid_params:
      st.error("Simulation cannot run due to invalid baseline or initiative parameters (e.g., negative Scale/Shape). Please check sidebar inputs.")
 else:
-    st.info(f"Adjust parameters and click '🚀 Run {N_SIMULATIONS} Simulations' to start.")
+    # Dynamic button text hint
+    st.info(f"Adjust parameters and click '🚀 Run {N_SIMULATIONS:,} Simulations' to start.")
 
 # Add a footer or separator
 st.markdown("---")
-st.caption("Monte Carlo Initiative Simulator v1.1")
+st.caption("Monte Carlo Revenue Simulator v1.2")
