@@ -296,7 +296,7 @@ st.sidebar.header("⚙️ Simulation Controls")
 
 # --- Baseline Parameters ---
 st.sidebar.subheader("1. Baseline Customer Profile")
-n_customers = st.sidebar.slider("Number of Customers", 1000, 50000, 10000, 1000, help="Total customers per simulation run.")
+n_customers = st.sidebar.slider("Number of Customers", 1000, 1000000, 10000, 1000, help="Total customers per simulation run.")
 
 st.sidebar.markdown("**Distribution Settings (Current State):**")
 current_p_zero_perc = st.sidebar.slider("Percentage of Zero-Revenue Customers (%)", 0.0, 100.0, 60.0, 0.5,
