@@ -271,7 +271,9 @@ if current_theta_scale <= 0 and current_p_zero < 1:
     st.sidebar.warning("Baseline Scale (θ) must be > 0 if not all customers are zero-revenue.")
     valid_base_params = False
 
-st.sidebar.info(f"*Implied Baseline:* `p`: {current_p_zero:.3f}, `k`: {current_k_shape:.2f}, `θ`: {current_theta_scale:.2f if np.isfinite(current_theta_scale) else 'N/A'}")
+# Calculate theta string separately to handle NaN case before f-string formatting
+theta_baseline_str = f"{current_theta_scale:.2f}" if np.isfinite(current_theta_scale) else "N/A"
+st.sidebar.info(f"*Implied Baseline:* `p`: {current_p_zero:.3f}, `k`: {current_k_shape:.2f}, `θ`: {theta_baseline_str}")
 
 # Initiative Selection and Impact
 st.sidebar.subheader("2. Initiative Scenario")
@@ -309,7 +311,11 @@ if selected_initiative != "None":
     if initiative_theta_scale <= 0 and initiative_p_zero < 1:
         st.sidebar.warning("Initiative Scale (θ) must be > 0 if not all customers are zero-revenue.")
         valid_initiative_params = False
-    st.sidebar.info(f"*Implied Initiative:* `p`: {initiative_p_zero:.3f}, `k`: {initiative_k_shape:.2f}, `θ`: {initiative_theta_scale:.2f if np.isfinite(initiative_theta_scale) else 'N/A'}, *AvgRev*: ${initiative_mean_active:,.2f}")
+    # Calculate initiative theta string separately
+    theta_initiative_str = f"{initiative_theta_scale:.2f}" if np.isfinite(initiative_theta_scale) else "N/A"
+    # Format initiative mean active separately as well for clarity
+    formatted_initiative_mean_active = f"{initiative_mean_active:,.2f}" if np.isfinite(initiative_mean_active) else "N/A"
+    st.sidebar.info(f"*Implied Initiative:* `p`: {initiative_p_zero:.3f}, `k`: {initiative_k_shape:.2f}, `θ`: {theta_initiative_str}, *AvgRev*: ${formatted_initiative_mean_active}")
 else:
     # For "None" initiative, params are same as baseline
     initiative_p_zero = current_p_zero
